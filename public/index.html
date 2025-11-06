@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Space Sonar .io</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <link rel="preconnect" href="https://cdn.socket.io" crossorigin />
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" defer></script>
+  <script src="/game.js" type="module" defer></script>
+  <meta name="color-scheme" content="dark light" />
+  <meta name="description" content="Karanlık uzayda sonar ile rakipleri tespit et!" />
+  <link rel="icon" href="data:," />
+  <style>html,body{background:#000}</style>
+  <meta http-equiv="Permissions-Policy" content="interest-cohort=()" />
+</head>
+<body>
+  <!-- Main Menu -->
+  <div id="main-menu" class="main-menu">
+    <div class="menu-stars"></div>
+    <div class="menu-content">
+      <div class="menu-header">
+        <h1 class="menu-title">
+          <span class="title-word">SPACE</span>
+          <span class="title-word">SONAR</span>
+          <span class="title-glow">.io</span>
+        </h1>
+        <p class="menu-subtitle">Karanlık Uzayda Hayatta Kal</p>
+      </div>
+
+      <div class="menu-grid">
+        <div class="menu-column primary">
+          <div class="menu-auth">
+            <div class="auth-card" id="login-card">
+              <div class="auth-header">
+                <div class="auth-title">Giriş Yap</div>
+                <div class="auth-subtitle">Pilot hesabınla üsse bağlan</div>
+              </div>
+              <div class="auth-fields">
+                <input type="text" id="login-username" class="auth-input" placeholder="Kullanıcı Adı" maxlength="15" autocomplete="username" />
+                <input type="password" id="login-password" class="auth-input" placeholder="Şifre" maxlength="20" autocomplete="current-password" />
+              </div>
+              <button class="auth-btn primary" id="login-submit">Giriş Yap</button>
+              <div class="auth-note" id="ranked-requirement">Ranked maç açmak için önce 5 normal maç tamamla.</div>
+              <div class="account-status" id="account-status"></div>
+              <button class="auth-btn ghost" id="open-register">Hesabın yok mu? Kayıt Ol</button>
+            </div>
+
+            <div class="auth-card hidden" id="register-card">
+              <div class="auth-header">
+                <div class="auth-title">Kayıt Ol</div>
+                <div class="auth-subtitle">Yeni bir pilot profili oluştur</div>
+              </div>
+              <div class="auth-fields">
+                <input type="text" id="register-username" class="auth-input" placeholder="Kullanıcı Adı" maxlength="15" autocomplete="username" />
+                <input type="password" id="register-password" class="auth-input" placeholder="Şifre" maxlength="20" autocomplete="new-password" />
+                <input type="password" id="register-password-confirm" class="auth-input" placeholder="Şifreyi Doğrula" maxlength="20" autocomplete="new-password" />
+              </div>
+              <div class="auth-actions">
+                <button class="auth-btn ghost" id="register-cancel">Vazgeç</button>
+                <button class="auth-btn primary" id="register-submit">Kaydı Tamamla</button>
+              </div>
+              <div class="account-status" id="register-status"></div>
+            </div>
+
+            <div class="auth-card hidden" id="profile-card">
+              <div class="auth-header">
+                <div class="auth-title">Pilot Paneli</div>
+                <div class="auth-subtitle">Hoş geldin, <span id="profile-username"></span></div>
+              </div>
+              <div class="auth-note" id="profile-ranked-note"></div>
+              <button class="auth-btn ghost" id="logout-btn">Çıkış Yap</button>
+            </div>
+          </div>
+
+          <div class="menu-card menu-actions">
+            <button class="menu-btn" onclick="showHelp()">📖 Nasıl Oynanır</button>
+            <button class="menu-btn" id="sound-toggle" onclick="toggleSound()">🔊 Ses: Açık</button>
+            <button class="menu-btn hidden" id="career-button">📜 Kariyer</button>
+          </div>
+        </div>
+
+        <div class="menu-column secondary">
+          <div class="menu-card menu-play">
+            <div class="menu-card-title">Maça Katıl</div>
+            <div class="menu-mode-buttons" id="play-buttons">
+              <div class="queue-block" id="queue-normal-block">
+                <div class="queue-header">
+                  <span class="queue-label">🌌 Normal Maç</span>
+                  <span class="queue-status" id="queue-status-normal">Sırada 0 oyuncu</span>
+                </div>
+                <div class="queue-actions">
+                  <button class="queue-btn primary" id="queue-normal-join">Sıraya Gir</button>
+                  <button class="queue-btn ghost hidden" id="queue-normal-leave">Sıradan Çık</button>
+                </div>
+              </div>
+
+              <div class="queue-block ranked" id="queue-ranked-block">
+                <div class="queue-header">
+                  <span class="queue-label">🚀 Ranked Maç</span>
+                  <span class="queue-status" id="queue-status-ranked">Sırada 0 oyuncu</span>
+                </div>
+                <div class="queue-actions">
+                  <button class="queue-btn primary" id="queue-ranked-join">Sıraya Gir</button>
+                  <button class="queue-btn ghost hidden" id="queue-ranked-leave">Sıradan Çık</button>
+                </div>
+              </div>
+
+              <div class="queue-info" id="queue-info">Giriş yaptıktan sonra sıraya girebilirsin.</div>
+            </div>
+          </div>
+
+          <div class="menu-card menu-info">
+            <div class="menu-card-title">Kontroller</div>
+            <p class="menu-info-text">W/A/D: Hareket · Space/Mouse: Ateş · F: Tam ekran · G: Torpido · H: Füze</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <div class="career-overlay" id="career-overlay">
+    <div class="career-card">
+      <div class="career-card-header">
+        <div class="career-card-title">📜 Kariyer</div>
+        <button class="career-close" id="career-close">✕</button>
+      </div>
+      <div class="career-progress" id="career-progress"></div>
+      <div class="career-overview">
+        <div class="career-stats-grid" id="career-stats-grid"></div>
+        <div class="career-rank-panel">
+          <div class="career-rank-badge" id="career-current-rank">-</div>
+          <div class="career-rank-detail" id="career-rank-detail"></div>
+        </div>
+      </div>
+      <div class="career-charts">
+        <div class="career-chart" id="career-mode-chart">
+          <div class="career-chart-title">Maç Türü Dağılımı</div>
+          <canvas id="career-mode-canvas" width="220" height="220"></canvas>
+          <div class="career-chart-legend" id="career-mode-legend"></div>
+        </div>
+        <div class="career-chart" id="career-rank-chart">
+          <div class="career-chart-title">Rank Puanı Geçmişi</div>
+          <canvas id="career-rank-canvas" width="320" height="220"></canvas>
+        </div>
+      </div>
+      <div class="career-summary" id="career-summary"></div>
+      <div class="career-filters">
+        <button class="career-filter" data-filter="all">Tümü</button>
+        <button class="career-filter" data-filter="ranked">Ranked</button>
+        <button class="career-filter" data-filter="normal">Normal</button>
+      </div>
+      <div class="career-list" id="career-list"></div>
+      <div class="career-bottom">
+        <div class="career-icon-legend" id="career-icon-legend"></div>
+        <div class="career-history-footer" id="career-history-footer"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Background Music -->
+  <audio id="bg-music" loop>
+    <source src="/music.mp3" type="audio/mpeg">
+  </audio>
+  
+  <!-- Toast Container -->
+  <div class="toast-container" id="toast-container"></div>
+  
+  <canvas id="game"></canvas>
+  <div class="hud">
+    <div class="title">Space Sonar .io</div>
+    <div class="status"><span id="name"></span> · Ping: <span id="ping">-</span> ms · FPS: <span id="fps">-</span></div>
+    <div class="help">W: İleri · A/D veya Sağ Tık: Dön · Space/Sol Tık: Ateş · F: Tam Ekran · G: Torpido · H: Füze · Tab: Skor Tablosu · M: Minimap</div>
+  </div>
+  
+  <!-- Scoreboard Overlay -->
+  <div class="scoreboard-overlay" id="scoreboard-overlay">
+    <div class="scoreboard-body" id="scoreboard-body"></div>
+    <div class="sb-icons" id="rank-icon-legend"></div>
+  </div>
+
+  <div class="match-summary-overlay" id="match-summary-overlay">
+    <div class="match-summary-card">
+      <div class="match-summary-header">
+        <div class="match-summary-title">🏁 Maç Özeti</div>
+        <div class="match-summary-result" id="match-summary-result">Maç Bitti</div>
+      </div>
+      <div class="match-summary-body" id="match-summary-body"></div>
+      <div class="match-summary-actions">
+        <button class="summary-btn primary" id="match-summary-play-again">Yeni Maça Başla</button>
+        <button class="summary-btn" id="match-summary-exit">Ana Menüye Dön</button>
+      </div>
+    </div>
+  </div>
+ 
+  <!-- Kill Feed -->
+  <div class="killfeed" id="killfeed"></div>
+  
+  <!-- Skills Panel -->
+  <div class="skills-panel" id="skills-panel">
+    <div class="skill-title draggable-handle">⚡ YETENEKLER</div>
+    <div class="skills-row">
+      <div class="skill" id="skill-speed">
+        <span class="skill-icon">🚀</span>
+        <div class="skill-info">
+          <div class="skill-name">Hız Artışı</div>
+          <div class="skill-level" id="speed-level">Lv. 0/3</div>
+        </div>
+        <button class="skill-btn" onclick="upgradeSkill('speedBoost')">↑</button>
+      </div>
+      <div class="skill" id="skill-shield">
+        <span class="skill-icon">🛡️</span>
+        <div class="skill-info">
+          <div class="skill-name">Kalkan</div>
+          <div class="skill-level" id="shield-level">Lv. 0/3</div>
+        </div>
+        <button class="skill-btn" onclick="upgradeSkill('shield')">↑</button>
+      </div>
+      <div class="skill" id="skill-rapid">
+        <span class="skill-icon">🔫</span>
+        <div class="skill-info">
+          <div class="skill-name">Hızlı Ateş</div>
+          <div class="skill-level" id="rapid-level">Lv. 0/3</div>
+        </div>
+        <button class="skill-btn" onclick="upgradeSkill('rapidFire')">↑</button>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Weapons Panel -->
+  <div class="weapons-panel" id="weapons-panel">
+    <div class="weapon-title draggable-handle">🚀 SİLAHLAR</div>
+    <div class="weapons-row">
+      <div class="upgrade-item">
+        <span class="upgrade-icon">🔫</span>
+        <div class="upgrade-info">
+          <div class="upgrade-name">Top [Sol Click/Space]</div>
+          <div class="upgrade-level" id="cannon-level">Lv. 1/3</div>
+        </div>
+        <button class="upgrade-btn" onclick="upgradeWeapon('cannon')">↑</button>
+      </div>
+      <div class="upgrade-item">
+        <span class="upgrade-icon">🎯</span>
+        <div class="upgrade-info">
+          <div class="upgrade-name">Torpido [G]</div>
+          <div class="upgrade-level" id="torpedo-level">Lv. 0/3 (150)</div>
+        </div>
+        <button class="upgrade-btn" onclick="upgradeWeapon('torpedo')">↑</button>
+      </div>
+      <div class="upgrade-item">
+        <span class="upgrade-icon">🚀</span>
+        <div class="upgrade-info">
+          <div class="upgrade-name">Füze [H]</div>
+          <div class="upgrade-level" id="missile-level">Lv. 0/3 (200)</div>
+        </div>
+        <button class="upgrade-btn" onclick="upgradeWeapon('missile')">↑</button>
+      </div>
+    </div>
+  </div>
+  
+</body>
+</html>
