@@ -1,6 +1,24 @@
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 
+const loadingOverlay = document.getElementById('loading-overlay');
+const loadingMessageEl = document.getElementById('loading-message');
+const loadingProgressBar = document.getElementById('loading-progress-bar');
+const loadingSubtextEl = document.getElementById('loading-subtext');
+let isMatchLoading = false;
+let loadingSequenceReady = false;
+
+const environmentCache = {
+  seed: '',
+  width: 0,
+  height: 0,
+  background: null,
+  nebulas: [],
+  farStars: [],
+  midStars: [],
+  nearStars: []
+};
+
 let width = 0, height = 0, dpr = 1;
 function resize() {
   dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
@@ -11,6 +29,7 @@ function resize() {
   canvas.style.width = width + 'px';
   canvas.style.height = height + 'px';
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  invalidateEnvironmentCacheDimensions();
 }
 window.addEventListener('resize', resize);
 resize();
@@ -22,6 +41,7 @@ let musicEnabled = true;
 const bgMusic = document.getElementById('bg-music');
 
 async function showMainMenu() {
+  hideRankedLeaveOverlay(true);
   const menu = document.getElementById('main-menu');
   if (menu) menu.classList.remove('hidden');
   if (soundToggleBtn) {
@@ -155,6 +175,7 @@ const TAU = Math.PI * 2;
 const MAGNETIC_FIELD_BASE_RADIUS = 58;
 const MAGNETIC_FIELD_SOFTNESS = 0.35;
 const numberFormatter = new Intl.NumberFormat('tr-TR');
+const RANKED_FORFEIT_PENALTY = 75;
 
 let matchInfo = { id: 0, timeRemaining: MATCH_LENGTH_MS, countdown: MATCH_COUNTDOWN_MS, phase: 'countdown', teams: {}, players: [] };
 let teamMeta = {};
@@ -162,6 +183,12 @@ let myTeam = null;
 let scoreboardVisible = false;
 const scoreboardOverlay = document.getElementById('scoreboard-overlay');
 const scoreboardBody = document.getElementById('scoreboard-body');
+const rankedLeaveOverlay = document.getElementById('ranked-leave-overlay');
+const rankedLeavePenaltyEl = document.getElementById('ranked-leave-penalty');
+const rankedLeaveConfirmBtn = document.getElementById('ranked-leave-confirm');
+const rankedLeaveCancelBtn = document.getElementById('ranked-leave-cancel');
+const rankedLeaveCloseBtn = document.getElementById('ranked-leave-close');
+const rankedLeaveConfirmDefaultText = rankedLeaveConfirmBtn ? rankedLeaveConfirmBtn.textContent : 'Rank Cezasını Kabul Et';
 
 let selectedMode = 'normal';
 let myMode = 'normal';
@@ -176,6 +203,8 @@ const matchSummaryPlayAgainBtn = document.getElementById('match-summary-play-aga
 const matchSummaryExitBtn = document.getElementById('match-summary-exit');
 let summaryRestartPending = false;
 let latestMatchSummary = null;
+let rankedLeaveOverlayVisible = false;
+let rankedLeaveRequestPending = false;
 
 function clamp01(v) {
   if (v <= 0) return 0;
@@ -192,9 +221,227 @@ function lerpAngle(a, b, t) {
   return a + diff * t;
 }
 
+function normalizeAngle(angle) {
+  if (!Number.isFinite(angle)) return 0;
+  let wrapped = (angle + Math.PI) % TAU;
+  if (wrapped < 0) wrapped += TAU;
+  return wrapped - Math.PI;
+}
+
 function smoothStep(t) {
   const clamped = clamp01(t);
   return clamped * clamped * (3 - 2 * clamped);
+}
+
+function showLoadingScreen(message = 'Harita yükleniyor...', progress = 0, subtext = '') {
+  if (!loadingOverlay) return;
+  loadingOverlay.classList.remove('hidden');
+  isMatchLoading = true;
+  loadingSequenceReady = false;
+  updateLoadingProgress(progress, message);
+  updateLoadingSubtext(subtext);
+}
+
+function updateLoadingProgress(progress = 0, message) {
+  const clamped = Math.max(0, Math.min(100, Math.round(progress)));
+  if (loadingProgressBar) {
+    loadingProgressBar.style.width = `${clamped}%`;
+  }
+  if (loadingMessageEl && message) {
+    loadingMessageEl.textContent = message;
+  }
+}
+
+function updateLoadingSubtext(text = '') {
+  if (loadingSubtextEl) {
+    loadingSubtextEl.textContent = text || '';
+  }
+}
+
+function hideLoadingScreen(force = false) {
+  if (!loadingOverlay) return;
+  if (!isMatchLoading && !force) return;
+  isMatchLoading = false;
+  loadingSequenceReady = false;
+  if (loadingProgressBar) {
+    loadingProgressBar.style.width = '0%';
+  }
+  if (force && loadingMessageEl) {
+    loadingMessageEl.textContent = '';
+  }
+  updateLoadingSubtext('');
+  loadingOverlay.classList.add('hidden');
+}
+
+function invalidateEnvironmentCacheDimensions() {
+  environmentCache.width = 0;
+  environmentCache.height = 0;
+  environmentCache.background = null;
+}
+
+function ensureEnvironmentCache(seed) {
+  const targetSeed = seed || 'menu';
+  if (!environmentCache.background || environmentCache.seed !== targetSeed || environmentCache.width !== width || environmentCache.height !== height) {
+    prepareEnvironmentCache(targetSeed);
+  }
+}
+
+function prepareEnvironmentCache(seed) {
+  const targetSeed = seed || 'menu';
+  const targetWidth = Math.max(1, width);
+  const targetHeight = Math.max(1, height);
+  const rng = createSeededRng(`${targetSeed}:${targetWidth}x${targetHeight}`);
+  const worldWidth = Math.max(1, world?.width || 6000);
+  const worldHeight = Math.max(1, world?.height || 5200);
+
+  environmentCache.seed = targetSeed;
+  environmentCache.width = targetWidth;
+  environmentCache.height = targetHeight;
+  environmentCache.background = generateBackgroundCanvas(rng, targetWidth, targetHeight);
+  environmentCache.nebulas = generateNebulas(rng, Math.max(6, Math.floor((worldWidth + worldHeight) / 1600)));
+  environmentCache.farStars = generateStarField(rng, Math.max(120, Math.floor((worldWidth + worldHeight) / 30)), [0.18, 0.28], [1.2, 1.8], [[137, 180, 250], [168, 196, 255], [140, 197, 255]]);
+  environmentCache.midStars = generateStarField(rng, Math.max(150, Math.floor((worldWidth + worldHeight) / 26)), [0.35, 0.5], [1.4, 2.2], [[214, 226, 255], [190, 208, 255], [165, 196, 255]], true);
+  environmentCache.nearStars = generateStarField(rng, Math.max(130, Math.floor((worldWidth + worldHeight) / 28)), [0.6, 0.85], [1.8, 2.8], [[255, 255, 255], [239, 245, 255], [222, 234, 255]], true);
+}
+
+function createSeededRng(seed) {
+  const str = String(seed || 'seed');
+  let h = 1779033703 ^ str.length;
+  for (let i = 0; i < str.length; i++) {
+    h = Math.imul(h ^ str.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  return function() {
+    h = Math.imul(h ^ (h >>> 16), 2246822507);
+    h = Math.imul(h ^ (h >>> 13), 3266489909);
+    const t = (h ^= h >>> 16) >>> 0;
+    return t / 4294967296;
+  };
+}
+
+function generateStarField(rng, count, parallaxRange, sizeRange, palette, withSparkle = false) {
+  const [pMin, pMax] = Array.isArray(parallaxRange) ? parallaxRange : [parallaxRange, parallaxRange];
+  const [sMin, sMax] = sizeRange;
+  const paletteArray = Array.isArray(palette) && palette.length ? palette : [[255, 255, 255]];
+  const stars = [];
+  const worldWidth = Math.max(1, world?.width || 6000);
+  const worldHeight = Math.max(1, world?.height || 5200);
+  for (let i = 0; i < count; i++) {
+    const colorTarget = paletteArray[Math.floor(rng() * paletteArray.length)] || [255, 255, 255];
+    const alpha = 0.45 + rng() * 0.45;
+    stars.push({
+      x: rng() * worldWidth,
+      y: rng() * worldHeight,
+      parallax: pMin + rng() * (pMax - pMin),
+      size: sMin + rng() * (sMax - sMin),
+      color: `rgba(${colorTarget[0]}, ${colorTarget[1]}, ${colorTarget[2]}, ${alpha.toFixed(3)})`,
+      sparkle: withSparkle && rng() > 0.7
+    });
+  }
+  return stars;
+}
+
+function generateNebulas(rng, count) {
+  const nebulas = [];
+  const worldWidth = Math.max(1, world?.width || 6000);
+  const worldHeight = Math.max(1, world?.height || 5200);
+  for (let i = 0; i < count; i++) {
+    const radius = 160 + rng() * 260;
+    const size = Math.ceil(radius * 2);
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const gctx = canvas.getContext('2d');
+    const hue = 210 + rng() * 60;
+    const gradient = gctx.createRadialGradient(radius, radius, 0, radius, radius, radius);
+    gradient.addColorStop(0, `hsla(${hue}, 75%, 65%, 0.18)`);
+    gradient.addColorStop(0.5, `hsla(${hue}, 70%, 50%, 0.08)`);
+    gradient.addColorStop(1, 'rgba(0,0,0,0)');
+    gctx.fillStyle = gradient;
+    gctx.fillRect(0, 0, size, size);
+    nebulas.push({
+      x: rng() * worldWidth,
+      y: rng() * worldHeight,
+      parallax: 0.12 + rng() * 0.12,
+      alpha: 0.35 + rng() * 0.25,
+      size,
+      canvas
+    });
+  }
+  return nebulas;
+}
+
+function generateBackgroundCanvas(rng, targetWidth, targetHeight) {
+  const canvas = document.createElement('canvas');
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+  const gctx = canvas.getContext('2d');
+  const radius = Math.max(targetWidth, targetHeight);
+  const gradient = gctx.createRadialGradient(targetWidth / 2, targetHeight / 2, 0, targetWidth / 2, targetHeight / 2, radius);
+  gradient.addColorStop(0, '#060b19');
+  gradient.addColorStop(0.55, '#040814');
+  gradient.addColorStop(1, '#02040a');
+  gctx.fillStyle = gradient;
+  gctx.fillRect(0, 0, targetWidth, targetHeight);
+
+  const noiseCount = Math.floor((targetWidth * targetHeight) / 5500);
+  for (let i = 0; i < noiseCount; i++) {
+    const nx = rng() * targetWidth;
+    const ny = rng() * targetHeight;
+    const alpha = 0.05 + rng() * 0.08;
+    gctx.fillStyle = `rgba(137, 180, 250, ${alpha.toFixed(3)})`;
+    gctx.fillRect(nx, ny, 1, 1);
+  }
+  return canvas;
+}
+
+function warmupHudCache() {
+  ctx.save();
+  ctx.font = 'bold 28px ui-sans-serif, system-ui';
+  ctx.measureText('Space Sonar .io');
+  ctx.restore();
+}
+
+function waitNextFrame() {
+  return new Promise(resolve => requestAnimationFrame(() => resolve()));
+}
+
+function delay(ms = 0) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function runMatchLoadingSequence(matchData = {}) {
+  if (!loadingOverlay) {
+    prepareEnvironmentCache(matchData && matchData.id ? `match-${matchData.id}` : 'match');
+    return;
+  }
+
+  if (isMatchLoading) {
+    prepareEnvironmentCache(matchData && matchData.id ? `match-${matchData.id}` : 'match');
+    return;
+  }
+
+  const seed = matchData && matchData.id ? `match-${matchData.id}` : `match-${Date.now()}`;
+  showLoadingScreen('Harita yükleniyor...', 8, 'Uzay koordinatları hesaplanıyor...');
+  try {
+    await waitNextFrame();
+    updateLoadingProgress(32, 'Uzay ortamı çiziliyor...');
+    updateLoadingSubtext('Yıldız alanı önbelleğe alınıyor...');
+    await waitNextFrame();
+    prepareEnvironmentCache(seed);
+    updateLoadingProgress(66, 'Çevresel detaylar hazırlanıyor...');
+    updateLoadingSubtext('HUD bileşenleri optimize ediliyor...');
+    warmupHudCache();
+    await waitNextFrame();
+    updateLoadingProgress(88, 'Sistemler senkronize ediliyor...');
+    updateLoadingSubtext('Pilot verileri bekleniyor...');
+    loadingSequenceReady = true;
+    await delay(280);
+  } catch (error) {
+    hideLoadingScreen(true);
+    throw error;
+  }
+  hideLoadingScreen();
 }
 
 // Toast notification system
@@ -241,6 +488,10 @@ let mouseX = 0;
 let mouseY = 0;
 let mouseDown = false;
 let mouseRightDown = false;
+const TURN_RATE = Math.PI * 1.4; // server turn speed (rad/s)
+let localAngle = 0;
+let localAngleInitialized = false;
+let lastInputUpdateAt = null;
 let spaceDown = false;
 
 const FIRE_COOLDOWN = 500; // ms
@@ -671,6 +922,16 @@ window.addEventListener('DOMContentLoaded', () => {
   });
   if (matchSummaryPlayAgainBtn) matchSummaryPlayAgainBtn.addEventListener('click', requestMatchRestart);
   if (matchSummaryExitBtn) matchSummaryExitBtn.addEventListener('click', returnToMainMenu);
+  if (rankedLeaveCancelBtn) rankedLeaveCancelBtn.addEventListener('click', () => hideRankedLeaveOverlay());
+  if (rankedLeaveCloseBtn) rankedLeaveCloseBtn.addEventListener('click', () => hideRankedLeaveOverlay());
+  if (rankedLeaveConfirmBtn) rankedLeaveConfirmBtn.addEventListener('click', confirmRankedLeave);
+  if (rankedLeaveOverlay) {
+    rankedLeaveOverlay.addEventListener('click', (e) => {
+      if (e.target === rankedLeaveOverlay && rankedLeaveOverlayVisible && !rankedLeaveRequestPending) {
+        hideRankedLeaveOverlay();
+      }
+    });
+  }
   if (logoutBtn) logoutBtn.addEventListener('click', handleLogout);
   if (queueNormalJoinBtn) queueNormalJoinBtn.addEventListener('click', () => joinQueue('normal'));
   if (queueNormalLeaveBtn) queueNormalLeaveBtn.addEventListener('click', leaveQueue);
@@ -731,6 +992,8 @@ socket.on('init', data => {
     };
   }
   if (scoreboardVisible) renderScoreboard();
+  const envSeed = data.match && data.match.id ? `match-${data.match.id}` : 'menu';
+  prepareEnvironmentCache(envSeed);
 });
 
 socket.on('saveProgress', (data) => {
@@ -751,6 +1014,10 @@ socket.on('state', s => {
   latency = Math.round(now - lastPingAt);
   pingEl.textContent = String(latency);
   lastPingAt = now;
+
+  if (isMatchLoading && loadingSequenceReady) {
+    hideLoadingScreen();
+  }
 
   const seenIds = new Set();
 
@@ -888,6 +1155,15 @@ socket.on('state', s => {
           updateRankedRequirementDisplay();
         }
       }
+      const serverAngle = snapshot.angle;
+      if (Number.isFinite(serverAngle)) {
+        if (!localAngleInitialized) {
+          localAngle = serverAngle;
+          localAngleInitialized = true;
+        } else {
+          localAngle = normalizeAngle(lerpAngle(localAngle, serverAngle, 0.2));
+        }
+      }
     }
   }
 
@@ -938,6 +1214,9 @@ socket.on('explosion', (data) => {
 });
 
 socket.on('matchStart', data => {
+  localAngleInitialized = false;
+  lastInputUpdateAt = null;
+  hideRankedLeaveOverlay(true);
   hideMatchSummary();
   summaryRestartPending = false;
   queueState.mode = null;
@@ -963,6 +1242,7 @@ socket.on('matchStart', data => {
   if (scoreboardVisible) renderScoreboard();
   const message = countdown > 0 ? `Maç ${formatTime(countdown)} sonra başlayacak!` : 'Maç başladı!';
   showToast('Maç Başlıyor', message, 'info');
+  Promise.resolve(runMatchLoadingSequence(data)).catch(err => console.error('match loading sequence failed', err));
 });
 
 socket.on('rankedLocked', data => {
@@ -977,6 +1257,7 @@ socket.on('rankedLocked', data => {
 });
 
 socket.on('matchEnd', data => {
+  hideLoadingScreen(true);
   matchInfo = {
     id: data.id,
     countdown: 0,
@@ -1027,6 +1308,47 @@ socket.on('matchEnd', data => {
   showMatchSummary(data);
 });
 
+socket.on('ranked:forfeit:result', (data = {}) => {
+  rankedLeaveRequestPending = false;
+  if (rankedLeaveConfirmBtn) {
+    rankedLeaveConfirmBtn.disabled = false;
+    rankedLeaveConfirmBtn.textContent = rankedLeaveConfirmDefaultText;
+  }
+  if (rankedLeaveCancelBtn) {
+    rankedLeaveCancelBtn.disabled = false;
+  }
+
+  if (!data.success) {
+    const message = data.error || 'Ranked maçtan ayrılırken bir hata oluştu. Lütfen tekrar dene.';
+    showToast('Ranked Uyarısı', message, 'error');
+    return;
+  }
+
+  hideRankedLeaveOverlay(true);
+
+  const penalty = typeof data.penalty === 'number' ? data.penalty : RANKED_FORFEIT_PENALTY;
+  if (currentUser) {
+    if (typeof data.rankPoints === 'number') {
+      currentUser.rankPoints = data.rankPoints;
+    }
+    if (data.rankLabel) {
+      currentUser.rankLabel = data.rankLabel;
+    }
+    if (typeof data.highestRankPoints === 'number') {
+      currentUser.highestRankPoints = Math.max(currentUser.highestRankPoints || 0, data.highestRankPoints);
+    }
+    if (data.highestRankLabel) {
+      currentUser.highestRankLabel = data.highestRankLabel;
+    }
+    updateRankedRequirementDisplay();
+  }
+
+  showToast('Ranked Cezası', `Maçtan ayrıldığın için -${penalty} RP cezası uygulandı.`, 'warning');
+  setTimeout(() => {
+    returnToMainMenu();
+  }, 350);
+});
+
 // controls
 function onKey(e, down) {
   unlockAudio(); // unlock on any key press
@@ -1037,6 +1359,18 @@ function onKey(e, down) {
       showScoreboard();
     } else {
       hideScoreboard();
+    }
+    return;
+  }
+  if (e.key === 'Escape') {
+    if (!down) return;
+    e.preventDefault();
+    if (rankedLeaveOverlayVisible) {
+      hideRankedLeaveOverlay();
+    } else if (scoreboardVisible) {
+      hideScoreboard();
+    } else if (canShowRankedLeaveOverlay()) {
+      showRankedLeaveOverlay();
     }
     return;
   }
@@ -1141,28 +1475,144 @@ canvas.addEventListener('mousemove', (e) => {
   mouseY = e.clientY - rect.top;
 });
 
+function pushNeutralInput() {
+  if (socket && socket.connected) {
+    socket.emit('input', { thrust: false, turn: 0 });
+  }
+}
+
+function canShowRankedLeaveOverlay() {
+  if (!gameStarted) return false;
+  if (myMode !== 'ranked') return false;
+  if (!matchInfo) return false;
+  const phase = matchInfo.phase || 'waiting';
+  return phase === 'countdown' || phase === 'active';
+}
+
+function updateRankedLeavePenaltyDisplay() {
+  if (rankedLeavePenaltyEl) {
+    rankedLeavePenaltyEl.textContent = `-${RANKED_FORFEIT_PENALTY} RP`;
+  }
+}
+
+function showRankedLeaveOverlay() {
+  if (!rankedLeaveOverlay || rankedLeaveRequestPending) return;
+  if (!canShowRankedLeaveOverlay()) {
+    showToast('Ranked Uyarısı', 'Yalnızca aktif ranked maçlarında ayrılma menüsü kullanılabilir.', 'warning');
+    return;
+  }
+  updateRankedLeavePenaltyDisplay();
+  rankedLeaveOverlay.classList.remove('hidden');
+  rankedLeaveOverlayVisible = true;
+  hideScoreboard();
+  keys.clear();
+  mouseDown = false;
+  mouseRightDown = false;
+  thrust = false;
+  turn = 0;
+  lastInputUpdateAt = performance.now();
+  pushNeutralInput();
+}
+
+function hideRankedLeaveOverlay(force = false) {
+  if (!rankedLeaveOverlay) return;
+  if (!rankedLeaveOverlayVisible && !rankedLeaveRequestPending) return;
+  if (rankedLeaveRequestPending && !force) return;
+  rankedLeaveOverlayVisible = false;
+  rankedLeaveRequestPending = false;
+  rankedLeaveOverlay.classList.add('hidden');
+  if (rankedLeaveConfirmBtn) {
+    rankedLeaveConfirmBtn.disabled = false;
+    rankedLeaveConfirmBtn.textContent = rankedLeaveConfirmDefaultText;
+  }
+  if (rankedLeaveCancelBtn) {
+    rankedLeaveCancelBtn.disabled = false;
+  }
+}
+
+function confirmRankedLeave() {
+  if (rankedLeaveRequestPending) return;
+  if (!socket || !socket.connected) {
+    showToast('Ranked Uyarısı', 'Sunucuya bağlı değilsin. Önce tekrar bağlanmalısın.', 'error');
+    return;
+  }
+  if (!canShowRankedLeaveOverlay()) {
+    hideRankedLeaveOverlay(true);
+    showToast('Ranked Uyarısı', 'Şu anda maçtan ayrılma menüsü kullanılamıyor.', 'warning');
+    return;
+  }
+  rankedLeaveRequestPending = true;
+  if (rankedLeaveConfirmBtn) {
+    rankedLeaveConfirmBtn.disabled = true;
+    rankedLeaveConfirmBtn.textContent = 'Çıkılıyor...';
+  }
+  if (rankedLeaveCancelBtn) {
+    rankedLeaveCancelBtn.disabled = true;
+  }
+  pushNeutralInput();
+  socket.emit('ranked:forfeit', { penalty: RANKED_FORFEIT_PENALTY });
+}
+
 window.addEventListener('keydown', e => onKey(e, true));
 window.addEventListener('keyup', e => onKey(e, false));
 window.addEventListener('blur', hideScoreboard);
 
 function updateInput() {
+  const now = performance.now();
+  if (lastInputUpdateAt === null) {
+    lastInputUpdateAt = now;
+  }
+  const dt = Math.max(0, (now - lastInputUpdateAt) / 1000);
+  lastInputUpdateAt = now;
+
+  const serverMe = getMe();
+
+  if (rankedLeaveOverlayVisible) {
+    thrust = false;
+    turn = 0;
+    if (now - lastSent > 40) {
+      socket.emit('input', { thrust, turn });
+      lastSent = now;
+    }
+    return;
+  }
+
+  if (localAngleInitialized) {
+    if (serverMe && Number.isFinite(serverMe.angle)) {
+      localAngle = normalizeAngle(lerpAngle(localAngle, serverMe.angle, clamp01(dt * 3)));
+    }
+    localAngle = normalizeAngle(localAngle + turn * TURN_RATE * dt);
+  } else if (serverMe && Number.isFinite(serverMe.angle)) {
+    localAngle = serverMe.angle;
+    localAngleInitialized = true;
+  }
+
   const newThrust = keys.has('w') || keys.has('arrowup');
   let newTurn = 0;
 
   // mouse right click rotation (override keyboard)
   if (mouseRightDown) {
-    const me = getMe();
-    const dx = mouseX - width/2;
-    const dy = mouseY - height/2;
+    const dx = mouseX - width / 2;
+    const dy = mouseY - height / 2;
     const targetAngle = Math.atan2(dy, dx);
+    const currentAngle = localAngleInitialized ? localAngle : (serverMe?.angle ?? 0);
+    let angleDiff = normalizeAngle(targetAngle - currentAngle);
 
-    let angleDiff = targetAngle - me.angle;
-    while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-    while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+    const desiredDirection = angleDiff > 0 ? 1 : angleDiff < 0 ? -1 : 0;
+    const previousDirection = Math.sign(turn);
+    if (
+      desiredDirection !== 0 &&
+      previousDirection !== 0 &&
+      desiredDirection !== previousDirection &&
+      Math.abs(angleDiff) < 0.18
+    ) {
+      angleDiff = previousDirection * Math.abs(angleDiff);
+    }
 
-    const turnStrength = clamp01(Math.abs(angleDiff) / 0.4);
-    newTurn = angleDiff > 0 ? turnStrength : -turnStrength;
-    if (Math.abs(angleDiff) < 0.02) {
+    const magnitude = clamp01(Math.abs(angleDiff) / 0.45);
+    newTurn = desiredDirection * magnitude;
+
+    if (Math.abs(angleDiff) < 0.06) {
       newTurn = 0;
     }
   }
@@ -1172,10 +1622,9 @@ function updateInput() {
   thrust = newThrust;
   turn = newTurn;
 
-  const t = performance.now();
-  if (t - lastSent > 40) {
+  if (now - lastSent > 40) {
     socket.emit('input', { thrust, turn });
-    lastSent = t;
+    lastSent = now;
   }
 }
 
@@ -1770,120 +2219,52 @@ function drawReveals(me, now) {
 }
 
 function drawStars(me) {
-  const rng = (x) => Math.abs(Math.sin(x * 12.9898) * 43758.5453) % 1;
-  
-  // deep space gradient
-  const bgGrad = ctx.createRadialGradient(width/2, height/2, 0, width/2, height/2, Math.max(width, height)/2);
-  bgGrad.addColorStop(0, '#0a0e1a');
-  bgGrad.addColorStop(0.5, '#050810');
-  bgGrad.addColorStop(1, '#020308');
-  ctx.fillStyle = bgGrad;
-  ctx.fillRect(0, 0, width, height);
-  
-  // distant nebulas
-  const cx = me.x / world.width;
-  const cy = me.y / world.height;
-  const nebulaCell = 1200;
-  const nCols = 3;
-  const nRows = 3;
-  const nStartX = Math.floor((me.x * 0.02 - width/2) / nebulaCell) - 1;
-  const nStartY = Math.floor((me.y * 0.02 - height/2) / nebulaCell) - 1;
-  
-  for (let iy = 0; iy < nRows; iy++) {
-    for (let ix = 0; ix < nCols; ix++) {
-      const cx = (nStartX + ix) * nebulaCell;
-      const cy = (nStartY + iy) * nebulaCell;
-      const rx = rng(cx * 0.001 + cy * 0.002) * nebulaCell;
-      const ry = rng(cx * 0.002 + cy * 0.001) * nebulaCell;
-      const px = (cx - (me.x * 0.02 - width/2) + rx);
-      const py = (cy - (me.y * 0.02 - height/2) + ry);
-      
-      const size = 120 + rng(rx + ry) * 180;
-      const nebGrad = ctx.createRadialGradient(px, py, 0, px, py, size);
-      const hue = rng(rx * ry) * 60 + 220; // blue-purple range
-      nebGrad.addColorStop(0, `hsla(${hue}, 60%, 40%, 0.08)`);
-      nebGrad.addColorStop(0.5, `hsla(${hue}, 50%, 30%, 0.04)`);
-      nebGrad.addColorStop(1, 'transparent');
-      ctx.fillStyle = nebGrad;
-      ctx.beginPath();
-      ctx.arc(px, py, size, 0, Math.PI * 2);
-      ctx.fill();
-    }
+  const seed = matchInfo && matchInfo.id ? `match-${matchInfo.id}` : 'menu';
+  ensureEnvironmentCache(seed);
+
+  if (environmentCache.background) {
+    ctx.drawImage(environmentCache.background, 0, 0, width, height);
+  } else {
+    ctx.fillStyle = '#020308';
+    ctx.fillRect(0, 0, width, height);
   }
-  
-  // medium stars (parallax layer 1) - simplified
-  const cell1 = 250;
-  const cols1 = Math.ceil(width / cell1) + 2;
-  const rows1 = Math.ceil(height / cell1) + 2;
-  const startX1 = Math.floor((me.x * 0.3 - width/2) / cell1) - 1;
-  const startY1 = Math.floor((me.y * 0.3 - height/2) / cell1) - 1;
-  
-  for (let iy = 0; iy < rows1; iy++) {
-    for (let ix = 0; ix < cols1; ix++) {
-      const cx = (startX1 + ix) * cell1;
-      const cy = (startY1 + iy) * cell1;
-      for (let s = 0; s < 6; s++) {
-        const rx = rng(cx * 0.123 + cy * 0.987 + s) * cell1;
-        const ry = rng(cx * 0.777 + cy * 0.333 + s) * cell1;
-        const px = (cx - (me.x * 0.3 - width/2) + rx);
-        const py = (cy - (me.y * 0.3 - height/2) + ry);
-        const brightness = rng(rx + ry);
-        const size = brightness > 0.8 ? 2 : 1.5;
-        
-        ctx.fillStyle = brightness > 0.9 ? '#ffffff' : '#c8d8f8';
-        ctx.fillRect(px - size/2, py - size/2, size, size);
-      }
+
+  const originX = width / 2;
+  const originY = height / 2;
+
+  if (environmentCache.nebulas && environmentCache.nebulas.length) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < environmentCache.nebulas.length; i++) {
+      const neb = environmentCache.nebulas[i];
+      const { dx, dy } = wrappedDelta(neb.x, neb.y, me.x, me.y);
+      const px = originX + dx * neb.parallax;
+      const py = originY + dy * neb.parallax;
+      ctx.globalAlpha = neb.alpha;
+      ctx.drawImage(neb.canvas, px - neb.size / 2, py - neb.size / 2, neb.size, neb.size);
     }
+    ctx.restore();
   }
-  
-  // close stars (parallax layer 2) - no glow
-  const cell2 = 150;
-  const cols2 = Math.ceil(width / cell2) + 2;
-  const rows2 = Math.ceil(height / cell2) + 2;
-  const startX2 = Math.floor((me.x * 0.7 - width/2) / cell2) - 1;
-  const startY2 = Math.floor((me.y * 0.7 - height/2) / cell2) - 1;
-  
-  for (let iy = 0; iy < rows2; iy++) {
-    for (let ix = 0; ix < cols2; ix++) {
-      const cx = (startX2 + ix) * cell2;
-      const cy = (startY2 + iy) * cell2;
-      for (let s = 0; s < 4; s++) {
-        const rx = rng(cx * 0.456 + cy * 0.789 + s * 100) * cell2;
-        const ry = rng(cx * 0.654 + cy * 0.321 + s * 100) * cell2;
-        const px = (cx - (me.x * 0.7 - width/2) + rx);
-        const py = (cy - (me.y * 0.7 - height/2) + ry);
-        const brightness = rng(rx * ry + s);
-        const size = brightness > 0.8 ? 2.5 : 2;
-        
-        ctx.fillStyle = brightness > 0.85 ? '#ffffff' : '#d8e8ff';
-        ctx.fillRect(px - size/2, py - size/2, size, size);
-      }
-    }
-  }
-  
-  // foreground bright stars - minimal glow
-  const cell3 = 100;
-  const cols3 = Math.ceil(width / cell3) + 2;
-  const rows3 = Math.ceil(height / cell3) + 2;
-  const startX3 = Math.floor((me.x - width/2) / cell3) - 1;
-  const startY3 = Math.floor((me.y - height/2) / cell3) - 1;
-  
-  for (let iy = 0; iy < rows3; iy++) {
-    for (let ix = 0; ix < cols3; ix++) {
-      const cx = (startX3 + ix) * cell3;
-      const cy = (startY3 + iy) * cell3;
-      for (let s = 0; s < 2; s++) {
-        const rx = rng(cx * 0.911 + cy * 0.822 + s * 200) * cell3;
-        const ry = rng(cx * 0.733 + cy * 0.644 + s * 200) * cell3;
-        const px = (cx - (me.x - width/2) + rx);
-        const py = (cy - (me.y - height/2) + ry);
-        
-        if (rng(rx + ry + s) > 0.75) {
-          const size = 2.5 + rng(rx * ry);
-          ctx.fillStyle = '#ffffff';
-          ctx.fillRect(px - size/2, py - size/2, size, size);
-        }
-      }
+
+  drawStarLayer(environmentCache.farStars, me, originX, originY, false);
+  drawStarLayer(environmentCache.midStars, me, originX, originY, false);
+  drawStarLayer(environmentCache.nearStars, me, originX, originY, true);
+}
+
+function drawStarLayer(layer, me, originX, originY, allowSparkle) {
+  if (!Array.isArray(layer) || !layer.length) return;
+  for (let i = 0; i < layer.length; i++) {
+    const star = layer[i];
+    const { dx, dy } = wrappedDelta(star.x, star.y, me.x, me.y);
+    const px = originX + dx * star.parallax;
+    const py = originY + dy * star.parallax;
+    if (px < -60 || px > width + 60 || py < -60 || py > height + 60) continue;
+    ctx.fillStyle = star.color;
+    ctx.fillRect(px - star.size / 2, py - star.size / 2, star.size, star.size);
+    if (allowSparkle && star.sparkle) {
+      const sparkleSize = Math.max(1.4, star.size + 0.8);
+      ctx.fillRect(px - sparkleSize / 2, py - 0.5, sparkleSize, 1);
+      ctx.fillRect(px - 0.5, py - sparkleSize / 2, 1, sparkleSize);
     }
   }
 }
@@ -2152,6 +2533,14 @@ function drawCrosshair() {
 }
 
 function render() {
+  if (isMatchLoading) {
+    ctx.save();
+    ctx.fillStyle = '#050810';
+    ctx.fillRect(0, 0, width, height);
+    ctx.restore();
+    requestAnimationFrame(render);
+    return;
+  }
   updatePlayerInterpolation();
   updateInput();
   const me = getMe();
@@ -2335,8 +2724,21 @@ function renderScoreboard() {
     const teamData = teams[teamId] || { score: 0, kills: 0, deaths: 0, assists: 0, count: 0 };
     const members = playerArray.filter(p => (p.team || teamId) === teamId);
     members.sort((a, b) => {
-      const value = player => player.rank?.points ?? player.rankPoints ?? player.score ?? 0;
-      return value(b) - value(a);
+      const killsA = a.kills ?? 0;
+      const killsB = b.kills ?? 0;
+      if (killsB !== killsA) return killsB - killsA;
+
+      const assistsA = a.assists ?? 0;
+      const assistsB = b.assists ?? 0;
+      if (assistsB !== assistsA) return assistsB - assistsA;
+
+      const scoreA = a.score ?? 0;
+      const scoreB = b.score ?? 0;
+      if (scoreB !== scoreA) return scoreB - scoreA;
+
+      const deathsA = a.deaths ?? 0;
+      const deathsB = b.deaths ?? 0;
+      return deathsA - deathsB;
     });
     const rows = members.length ? members.map(p => {
       const kills = p.kills ?? 0;
@@ -3024,6 +3426,7 @@ function buildMatchSummaryBody(data) {
 }
 
 function showMatchSummary(data) {
+  hideRankedLeaveOverlay(true);
   if (!matchSummaryOverlay || !matchSummaryResultEl || !matchSummaryBodyEl) return;
   latestMatchSummary = data;
   summaryRestartPending = false;
@@ -3072,8 +3475,10 @@ function requestMatchRestart() {
 }
 
 function returnToMainMenu() {
+  hideRankedLeaveOverlay(true);
   hideMatchSummary();
   hideScoreboard();
+  hideLoadingScreen(true);
   streakNotifications = [];
   killFeed = [];
   particles = [];
@@ -3291,6 +3696,7 @@ function handleLogout(event) {
   if (socket.connected) {
     socket.disconnect();
   }
+  hideLoadingScreen(true);
   if (loginUsernameInput) loginUsernameInput.value = '';
   if (loginPasswordInput) loginPasswordInput.value = '';
   showLoginCard();

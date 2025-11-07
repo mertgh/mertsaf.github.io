@@ -15,6 +15,16 @@
   <meta http-equiv="Permissions-Policy" content="interest-cohort=()" />
 </head>
 <body>
+  <div class="loading-overlay hidden" id="loading-overlay">
+    <div class="loading-card">
+      <div class="loading-spinner"></div>
+      <div class="loading-message" id="loading-message">Yükleniyor...</div>
+      <div class="loading-progress">
+        <div class="loading-progress-bar" id="loading-progress-bar"></div>
+      </div>
+      <div class="loading-subtext" id="loading-subtext"></div>
+    </div>
+  </div>
   <!-- Main Menu -->
   <div id="main-menu" class="main-menu">
     <div class="menu-stars"></div>
@@ -177,6 +187,24 @@
   <div class="scoreboard-overlay" id="scoreboard-overlay">
     <div class="scoreboard-body" id="scoreboard-body"></div>
     <div class="sb-icons" id="rank-icon-legend"></div>
+  </div>
+
+  <div class="ranked-leave-overlay hidden" id="ranked-leave-overlay">
+    <div class="ranked-leave-card">
+      <div class="ranked-leave-header">
+        <div class="ranked-leave-title">⚠️ Ranked Maçtan Ayrıl</div>
+        <button class="ranked-leave-close" id="ranked-leave-close">✕</button>
+      </div>
+      <div class="ranked-leave-body">
+        <p>Maçtan ayrıldığında <span class="ranked-leave-penalty" id="ranked-leave-penalty">-75 RP</span> cezası uygulanacak.</p>
+        <div class="ranked-leave-warning">Takımını yalnız bırakmak rank puanı düşürür ve kariyerine yansır.</div>
+        <div class="ranked-leave-note">Bu işlem geri alınamaz. Maça dönmek için “Oyuna Devam Et” tuşuna bas.</div>
+      </div>
+      <div class="ranked-leave-actions">
+        <button class="ranked-leave-btn secondary" id="ranked-leave-cancel">Oyuna Devam Et</button>
+        <button class="ranked-leave-btn danger" id="ranked-leave-confirm">Rank Cezasını Kabul Et</button>
+      </div>
+    </div>
   </div>
 
   <div class="match-summary-overlay" id="match-summary-overlay">

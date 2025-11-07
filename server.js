@@ -1,3 +1,4 @@
+import dotenv from 'dotenv';
 import express from 'express';
 import http from 'http';
 import { Server as SocketIOServer } from 'socket.io';
@@ -6,6 +7,16 @@ import { fileURLToPath } from 'url';
 import mongoose from 'mongoose';
 import bcrypt from 'bcrypt';
 import User from './models/User.js';
+
+dotenv.config();
+
+const OFFLINE_MODE = (() => {
+  const flag = process.env.OFFLINE_MODE;
+  if (typeof flag === 'string') {
+    return flag.trim().toLowerCase() === 'true';
+  }
+  return true; // varsayılan olarak offline modda başla
+})();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -19,16 +30,43 @@ const io = new SocketIOServer(server, {
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-const MONGODB_URI = process.env.MONGODB_URI;
-const isMongoEnabled = !!MONGODB_URI;
+const MONGO_ENV_KEYS = ['MONGODB_URI', 'MONGO_URI', 'MONGODBURL', 'MONGOURL', 'DATABASE_URL'];
+const mongoResolution = (() => {
+  for (const key of MONGO_ENV_KEYS) {
+    const value = process.env[key];
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return { uri: value.trim(), key };
+    }
+  }
+  return { uri: undefined, key: null };
+})();
+
+const MONGODB_URI = mongoResolution.uri;
+const resolvedMongoKey = mongoResolution.key;
+const isMongoEnabled = !OFFLINE_MODE && !!MONGODB_URI;
 const memoryUsers = new Map();
 
 if (isMongoEnabled) {
+  if (resolvedMongoKey && resolvedMongoKey !== 'MONGODB_URI') {
+    console.log(`ℹ️ ${resolvedMongoKey} anahtarı bulundu ve Mongo bağlantısı için kullanılıyor. (MONGODB_URI yerine)`);
+  }
   mongoose.connect(MONGODB_URI)
     .then(() => console.log('MongoDB connected'))
     .catch(err => console.log('MongoDB connection error:', err));
 } else {
-  console.log('⚠️ MongoDB devre dışı. Localhost modunda kalıcı veri tutulmayacak.');
+  if (OFFLINE_MODE) {
+    console.log('🚧 Offline mode aktif: MongoDB bağlantısı geçici olarak kapatıldı ve tüm veriler bellek üzerinde tutuluyor.');
+  } else {
+    const envMongoKeys = Object.keys(process.env).filter(key => key.toLowerCase().includes('mongo'));
+    console.log('⚠️ MongoDB devre dışı. Localhost modunda kalıcı veri tutulmayacak.');
+    console.log('ℹ️ Sebep: MONGODB_URI environment değişkeni tanımlı değil veya boş.');
+    if (envMongoKeys.length > 0) {
+      console.log(`ℹ️ Bulunan mongo-* environment anahtarları: ${envMongoKeys.join(', ')}`);
+      if (resolvedMongoKey) {
+        console.log(`ℹ️ Ancak ${resolvedMongoKey} anahtarının değeri boş olduğu için bağlantı kurulamadı.`);
+      }
+    }
+  }
 }
 
 const TICK_HZ = 60;
@@ -61,6 +99,7 @@ const REQUIRED_NORMAL_MATCHES_FOR_RANKED = 5;
 const MAX_PLAYERS_PER_MATCH = 10;
 const MIN_PLAYERS_TO_START = 2;
 const RANKED_MAX_RP_GAP = 400;
+const RANKED_FORFEIT_PENALTY = 75;
 
 const queues = {
   normal: new Map(),
@@ -1278,6 +1317,78 @@ io.on('connection', socket => {
     leaveQueue(player);
   });
 
+  socket.on('ranked:forfeit', () => {
+    const player = players.get(socket.id);
+    if (!player) {
+      socket.emit('ranked:forfeit:result', { success: false, error: 'Oyuncu bulunamadı.' });
+      return;
+    }
+
+    const isInRankedMatch = player.isRanked && player.state === 'inMatch' && currentMatchMode === 'ranked' && (matchPhase === 'countdown' || matchPhase === 'active');
+    if (!isInRankedMatch) {
+      socket.emit('ranked:forfeit:result', { success: false, error: 'Şu anda ranked maçtan ayrılamazsın.' });
+      return;
+    }
+
+    const penalty = Math.max(0, RANKED_FORFEIT_PENALTY);
+    const previousPoints = player.rankPoints || 0;
+    player.rankPoints = Math.max(0, previousPoints - penalty);
+    player.rankInfo = resolveRank(player.rankPoints);
+    player.rankLabel = player.rankInfo.label;
+    player.rankDelta = -penalty;
+    if (!player.highestRankPoints || player.highestRankPoints < player.rankPoints) {
+      player.highestRankPoints = player.rankPoints;
+      player.highestRankLabel = player.rankLabel;
+    }
+
+    activeMatchPlayers.delete(player.id);
+    leaveQueue(player, true);
+    broadcastQueueSummary();
+    player.state = 'lobby';
+    player.mode = 'lobby';
+    player.isRanked = false;
+    player.queueMode = null;
+    player.thrust = false;
+    player.turn = 0;
+    player.vx = 0;
+    player.vy = 0;
+    player.hp = 0;
+
+    const savePayload = {
+      totalKills: player.totalKills,
+      totalScore: player.totalScore,
+      bestStreak: player.bestStreak,
+      totalDeaths: player.totalDeaths || 0,
+      shipColor: player.shipColor,
+      normalMatches: player.normalMatches || 0,
+      rankPoints: player.rankPoints || 0,
+      rankLabel: player.rankLabel,
+      highestRankPoints: player.highestRankPoints || 0,
+      highestRankLabel: player.highestRankLabel || player.rankLabel,
+      level: player.level || 1,
+      xp: player.xp || 0,
+      credits: player.credits || 0,
+      skills: player.skills,
+      weapons: player.weapons
+    };
+    io.to(player.id).emit('saveProgress', savePayload);
+
+    socket.emit('ranked:forfeit:result', {
+      success: true,
+      penalty,
+      rankPoints: player.rankPoints,
+      rankLabel: player.rankLabel,
+      highestRankPoints: player.highestRankPoints || 0,
+      highestRankLabel: player.highestRankLabel || player.rankLabel
+    });
+
+    setTimeout(() => {
+      if (socket.connected) {
+        socket.disconnect(true);
+      }
+    }, 150);
+  });
+
   socket.on('input', data => {
     const p = players.get(socket.id);
     if (!p) return;
@@ -2090,9 +2201,14 @@ setInterval(() => {
 }, 1000 / BROADCAST_HZ);
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
+const HOST = OFFLINE_MODE ? '127.0.0.1' : '0.0.0.0';
+
+server.listen(PORT, HOST, () => {
   // eslint-disable-next-line no-console
-  console.log(`space-sonar-io listening on http://localhost:${PORT}`);
+  console.log(`space-sonar-io listening on http://${OFFLINE_MODE ? '127.0.0.1' : 'localhost'}:${PORT}`);
+  if (OFFLINE_MODE) {
+    console.log('🔒 Sunucu şu anda sadece local bağlantıları kabul ediyor. Tekrar açmak için OFFLINE_MODE değerini false yapman yeterli.');
+  }
 });
 
 function createLobby(mode, participants) {

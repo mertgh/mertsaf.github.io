@@ -61,6 +61,18 @@ html, body { margin: 0; height: 100%; background: #000; color: #cdd6f4; font-fam
 .auth-actions .auth-btn { flex: 1; }
 .hidden { display: none !important; }
 
+/* Loading Overlay */
+.loading-overlay { position: fixed; inset: 0; background: rgba(6,9,18,0.92); backdrop-filter: blur(12px); display: flex; align-items: center; justify-content: center; z-index: 2000; padding: 24px; }
+.loading-overlay.hidden { display: none !important; }
+.loading-card { width: min(420px, 90vw); background: rgba(13,16,24,0.95); border: 1px solid rgba(137,180,250,0.2); border-radius: 16px; padding: 28px 32px; display: flex; flex-direction: column; gap: 18px; align-items: center; box-shadow: 0 24px 60px rgba(0,0,0,0.45); animation: fadeInUp 0.3s ease; }
+.loading-spinner { width: 60px; height: 60px; border-radius: 50%; border: 4px solid rgba(137,180,250,0.15); border-top-color: #89b4fa; animation: spin 0.9s linear infinite; }
+.loading-message { font-size: 18px; font-weight: 700; color: #f9e2af; text-align: center; letter-spacing: 0.4px; }
+.loading-subtext { font-size: 13px; color: rgba(205,214,244,0.75); text-align: center; min-height: 18px; }
+.loading-progress { width: 100%; height: 8px; border-radius: 999px; background: rgba(137,180,250,0.12); overflow: hidden; box-shadow: 0 0 0 1px rgba(137,180,250,0.25) inset; }
+.loading-progress-bar { width: 0%; height: 100%; background: linear-gradient(90deg, #74c7ec, #89b4fa, #cba6f7); transition: width 0.3s ease; box-shadow: 0 8px 20px rgba(137,180,250,0.35); }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes fadeInUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+
 .play-button { width: 100%; padding: 16px 32px; font-size: 18px; font-weight: 700; background: linear-gradient(135deg, #89b4fa, #7287fd); color: #fff; border: none; border-radius: 12px; cursor: pointer; transition: all 0.3s; box-shadow: 0 8px 24px rgba(137,180,250,0.4); position: relative; overflow: hidden; }
 .play-button:hover { transform: translateY(-2px); box-shadow: 0 12px 32px rgba(137,180,250,0.6); }
 .play-button:active { transform: translateY(0); }
@@ -183,6 +195,25 @@ html, body { margin: 0; height: 100%; background: #000; color: #cdd6f4; font-fam
 /* Scoreboard Overlay */
 .scoreboard-overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(10, 14, 26, 0.55); backdrop-filter: blur(6px); z-index: 30; opacity: 0; pointer-events: none; transition: opacity 0.15s ease; }
 .scoreboard-overlay.visible { opacity: 1; pointer-events: auto; }
+.ranked-leave-overlay { position: fixed; inset: 0; background: rgba(6, 9, 16, 0.8); backdrop-filter: blur(14px); display: flex; align-items: center; justify-content: center; padding: 24px; z-index: 60; }
+.ranked-leave-overlay.hidden { display: none !important; }
+.ranked-leave-card { width: min(460px, 92vw); background: rgba(12, 16, 26, 0.96); border: 1px solid rgba(250, 179, 135, 0.35); border-radius: 20px; padding: 28px; box-shadow: 0 28px 70px rgba(0,0,0,0.55); display: flex; flex-direction: column; gap: 20px; animation: fadeInUp 0.2s ease-out; }
+.ranked-leave-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ranked-leave-title { font-size: 20px; font-weight: 700; color: #fab387; letter-spacing: .4px; display: flex; align-items: center; gap: 8px; }
+.ranked-leave-close { background: transparent; border: none; color: rgba(205,214,244,0.75); font-size: 18px; cursor: pointer; padding: 4px; border-radius: 6px; transition: background 0.15s ease, color 0.15s ease; }
+.ranked-leave-close:hover { background: rgba(137,180,250,0.12); color: #cdd6f4; }
+.ranked-leave-body { display: flex; flex-direction: column; gap: 14px; font-size: 14px; line-height: 1.6; color: rgba(205,214,244,0.86); }
+.ranked-leave-body p { margin: 0; }
+.ranked-leave-penalty { color: #f38ba8; font-weight: 700; }
+.ranked-leave-warning { padding: 12px 14px; border-radius: 12px; background: rgba(243, 139, 168, 0.12); border: 1px solid rgba(243, 139, 168, 0.35); color: #f5c2e7; font-size: 13px; }
+.ranked-leave-note { font-size: 12px; color: rgba(205,214,244,0.65); }
+.ranked-leave-actions { display: flex; justify-content: flex-end; gap: 12px; }
+.ranked-leave-btn { padding: 12px 20px; border-radius: 12px; font-weight: 600; font-size: 13px; cursor: pointer; transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease, color 0.15s ease; border: 1px solid transparent; }
+.ranked-leave-btn.secondary { background: rgba(17, 20, 30, 0.85); border-color: rgba(137,180,250,0.35); color: #cdd6f4; }
+.ranked-leave-btn.secondary:hover { transform: translateY(-1px); box-shadow: 0 12px 28px rgba(137,180,250,0.2); }
+.ranked-leave-btn.danger { background: linear-gradient(135deg, #f38ba8, #eba0ac); color: #1e1e2e; box-shadow: 0 12px 26px rgba(243,139,168,0.35); }
+.ranked-leave-btn.danger:hover { transform: translateY(-1px); box-shadow: 0 16px 32px rgba(243,139,168,0.45); }
+.ranked-leave-btn:disabled { opacity: 0.55; cursor: not-allowed; transform: none; box-shadow: none; }
 .scoreboard-body { width: min(900px, 90vw); max-height: 80vh; overflow-y: auto; background: rgba(12, 16, 24, 0.92); border: 1px solid rgba(137,180,250,0.25); border-radius: 16px; padding: 20px 24px; box-shadow: 0 20px 60px rgba(0,0,0,0.45); }
 .sb-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
 .sb-title { font-size: 20px; font-weight: 700; color: #f9e2af; letter-spacing: .5px; }
